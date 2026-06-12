@@ -24,6 +24,8 @@ let currentConfig = {
 let wsConn = null;
 let reconnectTimer = null;
 let currentStatus = "stopped";
+let loginPollTimer = null;
+let isDouyinLoggedIn = false;
 
 // ==========================================================================
 // DOM ELEMENTS
@@ -37,6 +39,21 @@ const aiReplyToggle = document.getElementById("ai-reply-toggle");
 const smartTriggersToggle = document.getElementById("smart-triggers-toggle");
 const logTerminal = document.getElementById("log-terminal");
 const btnClearLogs = document.getElementById("btn-clear-logs");
+const douyinUser = document.getElementById("douyin-user");
+const douyinAvatar = document.getElementById("douyin-avatar");
+const douyinLoginState = document.getElementById("douyin-login-state");
+const douyinName = document.getElementById("douyin-name");
+const btnDouyinLogin = document.getElementById("btn-douyin-login");
+const loginModal = document.getElementById("login-modal");
+const douyinQrImage = document.getElementById("douyin-qr-image");
+const loginLoading = document.getElementById("login-loading");
+const loginStatusText = document.getElementById("login-status-text");
+const btnLoginClose = document.getElementById("btn-login-close");
+const btnLoginRefresh = document.getElementById("btn-login-refresh");
+douyinAvatar.addEventListener("error", () => {
+    douyinAvatar.removeAttribute("src");
+    douyinAvatar.style.display = "none";
+});
 
 // Tab content
 const tabButtons = document.querySelectorAll(".tab-btn");
@@ -79,6 +96,7 @@ document.addEventListener("DOMContentLoaded", () => {
     initTabs();
     initLlmFieldsToggle();
     loadSettings();
+    checkDouyinLogin();
     connectWebSocket();
     initEventListeners();
 });
@@ -90,6 +108,9 @@ function initEventListeners() {
     // Start / Stop
     btnStart.addEventListener("click", startBot);
     btnStop.addEventListener("click", stopBot);
+    btnDouyinLogin.addEventListener("click", handleDouyinLoginButton);
+    btnLoginRefresh.addEventListener("click", () => startDouyinLogin(true));
+    btnLoginClose.addEventListener("click", closeLoginModal);
     
     // Clear logs
     btnClearLogs.addEventListener("click", () => {
@@ -152,6 +173,163 @@ function initLlmFieldsToggle() {
 // ==========================================================================
 // API CLIENT - REST FETCH & SAVE
 // ==========================================================================
+async function checkDouyinLogin() {
+    try {
+        const res = await fetch("/api/douyin/login/status");
+        if (!res.ok) throw new Error("login status failed");
+        const data = await res.json();
+        updateDouyinUser(data);
+        if (!data.logged_in) {
+            startDouyinLogin(false);
+        }
+    } catch (err) {
+        updateDouyinUser({ logged_in: false, user: null });
+        appendLog("system", "WARNING", `抖音登录状态检查失败: ${err.message}`);
+    }
+}
+
+async function startDouyinLogin(showStatusLog = true) {
+    openLoginModal();
+    setLoginLoading("正在打开抖音登录页...");
+    try {
+        const res = await fetch("/api/douyin/login/start", { method: "POST" });
+        if (!res.ok) {
+            const text = await res.text();
+            throw new Error(text || "启动登录失败");
+        }
+        const data = await res.json();
+        handleLoginPollResult(data);
+        if (showStatusLog) {
+            appendLog("system", "INFO", "已打开抖音扫码登录，请完成扫码确认。");
+        }
+        startLoginPolling();
+    } catch (err) {
+        setLoginLoading(`登录启动失败: ${err.message}`);
+        appendLog("system", "ERROR", `抖音登录启动失败: ${err.message}`);
+    }
+}
+
+function handleDouyinLoginButton() {
+    if (isDouyinLoggedIn) {
+        logoutDouyin();
+        return;
+    }
+    startDouyinLogin(true);
+}
+
+async function logoutDouyin() {
+    if (!confirm("确认退出当前抖音账号吗？")) {
+        return;
+    }
+
+    btnDouyinLogin.disabled = true;
+    btnDouyinLogin.textContent = "退出中";
+    stopLoginPolling();
+
+    try {
+        const res = await fetch("/api/douyin/login/logout", { method: "POST" });
+        if (!res.ok) {
+            const text = await res.text();
+            throw new Error(text || "退出登录失败");
+        }
+        const data = await res.json();
+        updateDouyinUser(data);
+        closeLoginModal();
+        appendLog("system", "INFO", "已退出抖音登录。");
+    } catch (err) {
+        appendLog("system", "ERROR", `退出抖音登录失败: ${err.message}`);
+        btnDouyinLogin.textContent = "退出";
+    } finally {
+        btnDouyinLogin.disabled = false;
+    }
+}
+
+function openLoginModal() {
+    loginModal.classList.add("open");
+    loginModal.setAttribute("aria-hidden", "false");
+}
+
+function closeLoginModal() {
+    loginModal.classList.remove("open");
+    loginModal.setAttribute("aria-hidden", "true");
+    stopLoginPolling();
+}
+
+function startLoginPolling() {
+    stopLoginPolling();
+    loginPollTimer = setInterval(pollDouyinLogin, 2500);
+}
+
+function stopLoginPolling() {
+    if (loginPollTimer) {
+        clearInterval(loginPollTimer);
+        loginPollTimer = null;
+    }
+}
+
+async function pollDouyinLogin() {
+    try {
+        const res = await fetch("/api/douyin/login/poll");
+        if (!res.ok) throw new Error("轮询登录状态失败");
+        const data = await res.json();
+        handleLoginPollResult(data);
+    } catch (err) {
+        setLoginLoading(`登录状态检查失败: ${err.message}`);
+    }
+}
+
+function handleLoginPollResult(data) {
+    updateDouyinUser(data);
+    if (data.logged_in) {
+        loginStatusText.textContent = "登录成功";
+        closeLoginModal();
+        appendLog("system", "INFO", "抖音登录成功，已同步用户信息。");
+        return;
+    }
+
+    loginStatusText.textContent = "等待扫码登录";
+    if (data.qr_image) {
+        douyinQrImage.src = data.qr_image;
+        douyinQrImage.style.display = "block";
+        douyinQrImage.parentElement.classList.add("has-image");
+    }
+}
+
+function setLoginLoading(text) {
+    loginStatusText.textContent = text;
+    loginLoading.textContent = text;
+    douyinQrImage.removeAttribute("src");
+    douyinQrImage.style.display = "none";
+    douyinQrImage.parentElement.classList.remove("has-image");
+}
+
+function updateDouyinUser(data) {
+    const user = data && data.user ? data.user : null;
+    if (data && data.logged_in && user) {
+        isDouyinLoggedIn = true;
+        douyinUser.classList.add("logged-in");
+        douyinLoginState.textContent = "抖音已登录";
+        douyinName.textContent = user.name || "已登录抖音用户";
+        btnDouyinLogin.textContent = "退出";
+        if (user.avatar) {
+            douyinAvatar.src = user.avatar;
+            douyinAvatar.style.display = "block";
+        } else {
+            douyinAvatar.removeAttribute("src");
+            douyinAvatar.style.display = "none";
+        }
+        return;
+    }
+
+    isDouyinLoggedIn = false;
+    douyinUser.classList.remove("logged-in");
+    douyinLoginState.textContent = "抖音未登录";
+    douyinName.textContent = "点击登录";
+    btnDouyinLogin.textContent = "登录";
+    douyinAvatar.removeAttribute("src");
+    douyinAvatar.style.display = "none";
+}
+
 async function loadSettings() {
     try {
         const res = await fetch("/api/config");

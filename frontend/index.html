@@ -27,6 +27,14 @@
                     <p class="subtitle">Douyin Live AI Assistant Dashboard</p>
                 </div>
             </div>
+            <div class="douyin-user" id="douyin-user">
+                <img id="douyin-avatar" class="douyin-avatar" alt="" />
+                <div class="douyin-user-text">
+                    <span id="douyin-login-state" class="douyin-login-state">抖音未登录</span>
+                    <span id="douyin-name" class="douyin-name">点击登录</span>
+                </div>
+                <button id="btn-douyin-login" class="btn btn-secondary btn-xs">登录</button>
+            </div>
             <div class="status-badge-container">
                 <span class="status-dot" id="status-dot"></span>
                 <span id="status-text" class="status-text">未启动</span>
@@ -248,6 +256,26 @@
         </footer>
     </div>
     
+    <div class="login-modal" id="login-modal" aria-hidden="true">
+        <div class="login-dialog">
+            <div class="login-dialog-header">
+                <div>
+                    <h2>抖音扫码登录</h2>
+                    <p id="login-modal-desc">请使用抖音 App 扫码完成登录</p>
+                </div>
+                <button id="btn-login-close" class="login-close" aria-label="关闭">×</button>
+            </div>
+            <div class="login-qr-frame">
+                <img id="douyin-qr-image" class="douyin-qr-image" alt="抖音登录二维码" />
+                <div id="login-loading" class="login-loading">正在打开抖音登录页...</div>
+            </div>
+            <div class="login-dialog-footer">
+                <span id="login-status-text">等待扫码登录</span>
+                <button id="btn-login-refresh" class="btn btn-secondary btn-xs">刷新二维码</button>
+            </div>
+        </div>
+    </div>
+
     <script src="/static/js/app.js"></script>
 </body>
 </html>

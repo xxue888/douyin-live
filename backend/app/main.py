@@ -13,6 +13,7 @@ from .config import settings
 from .database import load_config, save_config, update_config
 from .schemas.models import AppConfig
 from .core.automation import DouyinBot
+from .core.douyin_login import DouyinLoginManager
 from .core.scheduler import AnnouncementScheduler
 from .core.reply_engine import evaluate_comment
 
@@ -32,6 +33,7 @@ app.add_middleware(
 # Global instances
 bot: DouyinBot = None
 scheduler: AnnouncementScheduler = None
+login_manager: DouyinLoginManager = None
 active_sockets: List[WebSocket] = []
 
 class StartRequest(BaseModel):
@@ -135,8 +137,9 @@ def status_callback(status: str):
 # Initialize bot and scheduler
 @app.on_event("startup")
 async def startup_event():
-    global bot, scheduler
+    global bot, scheduler, login_manager
     log_callback("INFO", f"Asyncio event loop: {asyncio.get_running_loop().__class__.__name__}")
+    login_manager = DouyinLoginManager()
     bot = DouyinBot(
         log_callback=log_callback,
         chat_callback=chat_callback,
@@ -146,11 +149,13 @@ async def startup_event():
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    global bot, scheduler
+    global bot, scheduler, login_manager
     if scheduler:
         await scheduler.stop()
     if bot:
         await bot.stop()
+    if login_manager:
+        await login_manager.close()
 
 # REST Endpoints
 @app.get("/api/config", response_model=AppConfig)
@@ -171,9 +176,41 @@ async def get_status():
         "like_count": bot.like_count if bot else 0
     }
 
+@app.get("/api/douyin/login/status")
+async def get_douyin_login_status():
+    global login_manager
+    if not login_manager:
+        raise HTTPException(status_code=500, detail="登录管理器未初始化")
+    return await login_manager.get_cached_status()
+
+@app.post("/api/douyin/login/start")
+async def start_douyin_login():
+    global bot, login_manager
+    if not login_manager:
+        raise HTTPException(status_code=500, detail="登录管理器未初始化")
+    if bot and bot.status != "stopped":
+        raise HTTPException(status_code=409, detail="直播助手运行中，无法同时打开登录会话。")
+    return await login_manager.start()
+
+@app.get("/api/douyin/login/poll")
+async def poll_douyin_login():
+    global login_manager
+    if not login_manager:
+        raise HTTPException(status_code=500, detail="登录管理器未初始化")
+    return await login_manager.status(include_screenshot=True)
+
+@app.post("/api/douyin/login/logout")
+async def logout_douyin_login():
+    global bot, login_manager
+    if not login_manager:
+        raise HTTPException(status_code=500, detail="登录管理器未初始化")
+    if bot and bot.status != "stopped":
+        raise HTTPException(status_code=409, detail="直播助手运行中，请先停止后再退出登录。")
+    return await login_manager.logout()
+
 @app.post("/api/control/start")
 async def start_bot(req: StartRequest):
-    global bot, scheduler
+    global bot, scheduler, login_manager
     if not bot:
         raise HTTPException(status_code=500, detail="机器人未初始化")
         
@@ -186,6 +223,8 @@ async def start_bot(req: StartRequest):
     save_config(config)
     
     # Start bot and scheduler
+    if login_manager:
+        await login_manager.close()
     await bot.start(req.live_url, config)
     await scheduler.start()
     

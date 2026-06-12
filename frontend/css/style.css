@@ -111,6 +111,7 @@ body {
     display: flex;
     justify-content: space-between;
     align-items: center;
+    gap: 16px;
     padding-bottom: 24px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.05);
     margin-bottom: 24px;
@@ -142,6 +143,59 @@ body {
     color: var(--text-secondary);
     font-family: var(--font-display);
     letter-spacing: 0.05em;
+}
+
+.douyin-user {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 220px;
+    max-width: 320px;
+    padding: 8px 10px;
+    margin-left: auto;
+    background: rgba(255, 255, 255, 0.035);
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    border-radius: 12px;
+    backdrop-filter: blur(10px);
+}
+
+.douyin-avatar {
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    object-fit: cover;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    display: none;
+}
+
+.douyin-user.logged-in .douyin-avatar {
+    display: block;
+}
+
+.douyin-user-text {
+    display: flex;
+    flex: 1;
+    min-width: 0;
+    flex-direction: column;
+}
+
+.douyin-login-state {
+    color: var(--text-muted);
+    font-size: 0.72rem;
+}
+
+.douyin-name {
+    color: var(--text-primary);
+    font-weight: 600;
+    font-size: 0.9rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.douyin-user.logged-in .douyin-login-state {
+    color: var(--color-success);
 }
 
 /* Status Badge */
@@ -186,6 +240,97 @@ body {
     font-weight: 600;
     font-size: 0.9rem;
     color: var(--text-primary);
+}
+
+.login-modal {
+    position: fixed;
+    inset: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background: rgba(5, 8, 14, 0.72);
+    backdrop-filter: blur(10px);
+    z-index: 50;
+}
+
+.login-modal.open {
+    display: flex;
+}
+
+.login-dialog {
+    width: min(720px, 100%);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 16px;
+    background: rgba(15, 23, 42, 0.96);
+    box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+    overflow: hidden;
+}
+
+.login-dialog-header,
+.login-dialog-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 18px 20px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.login-dialog-footer {
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    border-bottom: none;
+    color: var(--text-secondary);
+}
+
+.login-dialog h2 {
+    font-size: 1.15rem;
+    margin-bottom: 4px;
+}
+
+.login-dialog p {
+    color: var(--text-secondary);
+    font-size: 0.88rem;
+}
+
+.login-close {
+    width: 34px;
+    height: 34px;
+    border: none;
+    border-radius: 8px;
+    color: var(--text-primary);
+    background: rgba(255, 255, 255, 0.08);
+    font-size: 1.4rem;
+    cursor: pointer;
+}
+
+.login-qr-frame {
+    position: relative;
+    min-height: 420px;
+    padding: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.douyin-qr-image {
+    width: 100%;
+    max-height: 560px;
+    object-fit: contain;
+    border-radius: 10px;
+    background: #fff;
+}
+
+.login-loading {
+    position: absolute;
+    color: var(--text-secondary);
+    padding: 10px 14px;
+    border-radius: 999px;
+    background: rgba(15, 23, 42, 0.86);
+}
+
+.login-qr-frame.has-image .login-loading {
+    display: none;
 }
 
 @keyframes pulse {
