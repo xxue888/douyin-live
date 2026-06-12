@@ -590,6 +590,21 @@ input:checked + .slider:before {
     color: #ffffff;
 }
 
+.gift-line {
+    color: #fde68a;
+    border-left: 2px solid rgba(251, 191, 36, 0.75);
+    padding-left: 8px;
+    background: rgba(251, 191, 36, 0.06);
+}
+.gift-label {
+    color: #fbbf24;
+    font-weight: 700;
+}
+.gift-text {
+    color: #fef3c7;
+    font-weight: 500;
+}
+
 .reply-line {
     color: #c084fc; /* purple-400 */
     border-left: 2px solid var(--color-accent);

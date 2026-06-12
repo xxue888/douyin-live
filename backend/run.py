@@ -4,6 +4,10 @@ import subprocess
 import uvicorn
 from pathlib import Path
 
+from backend.app.asyncio_compat import configure_windows_event_loop_policy
+
+configure_windows_event_loop_policy()
+
 # Ensure Playwright finds/installs Chromium inside our custom data folder when packaged
 if getattr(sys, 'frozen', False):
     os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(Path(sys.executable).parent / "data" / "playwright-browsers")
@@ -52,5 +56,9 @@ if __name__ == "__main__":
         from backend.app.main import app
         uvicorn.run(app, host=host, port=port)
     else:
-        uvicorn.run("backend.app.main:app", host=host, port=port, reload=True)
+        # Playwright needs a subprocess-capable event loop on Windows. Uvicorn's
+        # reload worker can create the loop before our app is imported, so keep
+        # reload off there and restart the script manually during development.
+        reload = sys.platform != "win32"
+        uvicorn.run("backend.app.main:app", host=host, port=port, reload=reload)
 

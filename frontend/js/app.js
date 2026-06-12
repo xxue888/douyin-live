@@ -439,6 +439,8 @@ function handleWsMessage(data) {
         appendLog("system", data.level, data.text, data.timestamp);
     } else if (data.type === "chat") {
         appendLog("chat", "", `${data.username}: ${data.content}`, data.timestamp, data.username);
+    } else if (data.type === "gift") {
+        appendLog("gift", "", `${data.username}: ${data.content}`, data.timestamp, data.username);
     } else if (data.type === "reply") {
         appendLog("reply", data.source, `回复给 [${data.username}]: ${data.reply}`, data.timestamp, data.comment);
     }
@@ -502,6 +504,11 @@ function appendLog(type, subType, text, timestamp = null, meta = "") {
         const username = meta;
         const msg = text.substring(username.length + 2);
         line.innerHTML = `[${timestamp}] <span class="chat-user">${escapeHtml(username)}</span>: <span class="chat-text">${escapeHtml(msg)}</span>`;
+    } else if (type === "gift") {
+        line.className = "log-line gift-line";
+        const username = meta;
+        const msg = text.substring(username.length + 2);
+        line.innerHTML = `[${timestamp}] [<span class="gift-label">礼物</span>] <span class="chat-user">${escapeHtml(username)}</span>: <span class="gift-text">${escapeHtml(msg)}</span>`;
     } else if (type === "reply") {
         line.className = "log-line reply-line";
         // subType is 'rule' or 'ai'

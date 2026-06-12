@@ -8,12 +8,15 @@ from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from .asyncio_compat import configure_windows_event_loop_policy
 from .config import settings
 from .database import load_config, save_config, update_config
 from .schemas.models import AppConfig
 from .core.automation import DouyinBot
 from .core.scheduler import AnnouncementScheduler
 from .core.reply_engine import evaluate_comment
+
+configure_windows_event_loop_policy()
 
 app = FastAPI(title="Douyin Live Auto-Assistant")
 
@@ -70,21 +73,25 @@ def log_callback(level: str, text: str):
     if loop.is_running():
         loop.create_task(broadcast(log_entry))
 
-def chat_callback(username: str, content: str):
+def chat_callback(username: str, content: str, event_type: str = "chat", metadata: dict = None):
+    metadata = metadata or {}
     timestamp = datetime.datetime.now().strftime("%H:%M:%S")
     chat_entry = {
         "timestamp": timestamp,
-        "type": "chat",
+        "type": event_type,
         "username": username,
-        "content": content
+        "content": content,
+        "metadata": metadata
     }
-    print(f"[{timestamp}] [CHAT] {username}: {content}")
+    label = "GIFT" if event_type == "gift" else "CHAT"
+    print(f"[{timestamp}] [{label}] {username}: {content}")
     
     # Broadcast to UI
     loop = asyncio.get_event_loop()
     if loop.is_running():
         loop.create_task(broadcast(chat_entry))
-        loop.create_task(process_chat_reply(username, content))
+        if event_type == "chat":
+            loop.create_task(process_chat_reply(username, content))
 
 async def process_chat_reply(username: str, content: str):
     global bot
@@ -129,6 +136,7 @@ def status_callback(status: str):
 @app.on_event("startup")
 async def startup_event():
     global bot, scheduler
+    log_callback("INFO", f"Asyncio event loop: {asyncio.get_running_loop().__class__.__name__}")
     bot = DouyinBot(
         log_callback=log_callback,
         chat_callback=chat_callback,

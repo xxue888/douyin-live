@@ -2,16 +2,17 @@ import asyncio
 import json
 import os
 import time
+import traceback
 from typing import Callable, Optional
 from playwright.async_api import async_playwright
 from ..config import settings
 from ..schemas.models import AppConfig
 
 class DouyinBot:
-    def __init__(self, log_callback: Callable[[str, str], None], chat_callback: Callable[[str, str], None], status_callback: Callable[[str], None]):
+    def __init__(self, log_callback: Callable[[str, str], None], chat_callback: Callable, status_callback: Callable[[str], None]):
         """
         log_callback: fn(level, message)
-        chat_callback: fn(username, message)
+        chat_callback: fn(username, message, event_type, metadata)
         status_callback: fn(status_str)
         """
         self.log_callback = log_callback
@@ -151,6 +152,9 @@ class DouyinBot:
             self.log_callback("INFO", "浏览器控制任务被取消")
         except Exception as e:
             self.log_callback("ERROR", f"浏览器运行发生错误: {str(e)}")
+            detail = str(e) or repr(e)
+            self.log_callback("ERROR", f"Browser exception detail: {type(e).__name__}: {detail}")
+            self.log_callback("DEBUG", traceback.format_exc())
             self.set_status("stopped")
             await self.stop()
 
@@ -446,14 +450,231 @@ class DouyinBot:
             startObserving();
         })();
         """
+        monitor_js = r"""
+        (() => {
+            if (window.__douyinLiveAssistantMonitor) {
+                window.__douyinLiveAssistantMonitor.stop();
+            }
+
+            console.log("[Bot] Douyin Live Monitor v2 initializing.");
+
+            const processedNodes = new WeakSet();
+            const recentFingerprints = new Map();
+            const maxFingerprintAgeMs = 90 * 1000;
+            const maxNodeTextLength = 220;
+            const scanSelectors = [
+                '[class*="chat"]',
+                '[class*="Chat"]',
+                '[class*="comment"]',
+                '[class*="Comment"]',
+                '[class*="message"]',
+                '[class*="Message"]',
+                '[class*="webcast"]',
+                '[data-index]',
+                'li',
+                'div'
+            ];
+
+            const ignorePieces = [
+                "\u6b22\u8fce\u6765\u5230\u6296\u97f3\u76f4\u64ad\u95f4",
+                "\u6296\u97f3\u4e25\u7981\u672a\u6210\u5e74\u4eba",
+                "\u7406\u6027\u6d88\u8d39",
+                "\u5207\u52ff\u79c1\u4e0b\u4ea4\u6613"
+            ];
+
+            function normalizeText(text) {
+                return (text || "").replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
+            }
+
+            function compactKey(text) {
+                return normalizeText(text).replace(/\s/g, "");
+            }
+
+            function isVisible(el) {
+                if (!el || el.nodeType !== Node.ELEMENT_NODE) return false;
+                const rect = el.getBoundingClientRect();
+                const style = window.getComputedStyle(el);
+                return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
+            }
+
+            function cleanupFingerprints() {
+                const cutoff = Date.now() - maxFingerprintAgeMs;
+                for (const [key, ts] of recentFingerprints.entries()) {
+                    if (ts < cutoff) recentFingerprints.delete(key);
+                }
+            }
+
+            function emitOnce(kind, username, content, metadata = {}) {
+                username = normalizeText(username).slice(0, 80);
+                content = normalizeText(content).slice(0, 200);
+                if (!username || !content) return false;
+
+                cleanupFingerprints();
+                const key = `${kind}|${username}|${content}|${metadata.giftName || ""}|${metadata.count || ""}`;
+                if (recentFingerprints.has(key)) return false;
+                recentFingerprints.set(key, Date.now());
+
+                console.log(`[Bot] ${kind}: ${username} -> ${content}`);
+                window.onNewMessage(username, content, kind, metadata);
+                return true;
+            }
+
+            function cleanUsername(name) {
+                return normalizeText(name)
+                    .replace(/^[\d\s]+/, "")
+                    .replace(/^(LV|Lv|level|Level)\s*\d+\s*/i, "")
+                    .replace(/^\u7c89\u4e1d\u56e2\s*/, "")
+                    .slice(0, 80);
+            }
+
+            function parseGift(text) {
+                const normalized = normalizeText(text);
+                const key = compactKey(normalized);
+                if (!key) return null;
+
+                const giftWords = ["\u9001\u51fa", "\u8d60\u9001", "\u9001\u4e86", "\u9001", "\u793c\u7269"];
+                if (!giftWords.some(word => key.includes(word))) return null;
+
+                const patterns = [
+                    /^(.+?)(?:\u9001\u51fa|\u8d60\u9001|\u9001\u4e86)(.+?)(?:[xX*]\s*(\d+)|\u00d7\s*(\d+)|(\d+)\u4e2a)?$/,
+                    /^(.+?)\u9001(.+?)(?:[xX*]\s*(\d+)|\u00d7\s*(\d+)|(\d+)\u4e2a)?$/
+                ];
+                for (const pattern of patterns) {
+                    const match = normalized.match(pattern);
+                    if (!match) continue;
+                    const username = cleanUsername(match[1]);
+                    const giftName = normalizeText(match[2]).replace(/^[\uff1a:]/, "").trim();
+                    const count = match[3] || match[4] || match[5] || "1";
+                    if (username && giftName && giftName.length <= 80) {
+                        return {
+                            username,
+                            content: `\u9001\u51fa ${giftName} x${count}`,
+                            metadata: { giftName, count }
+                        };
+                    }
+                }
+                return null;
+            }
+
+            function parseComment(text, el) {
+                const normalized = normalizeText(text);
+                const key = compactKey(normalized);
+                if (!key || key.length < 2 || key.length > maxNodeTextLength) return null;
+                if (ignorePieces.some(piece => key.includes(piece))) return null;
+                if (parseGift(normalized)) return null;
+
+                const colonMatch = normalized.match(/^(.{1,80}?)[\uff1a:]\s*(.{1,200})$/);
+                if (colonMatch) {
+                    const username = cleanUsername(colonMatch[1]);
+                    const content = normalizeText(colonMatch[2]);
+                    if (username && content) return { username, content };
+                }
+
+                const namedNodes = Array.from(el.querySelectorAll('[class*="name"], [class*="nick"], [class*="user"]'));
+                const contentNodes = Array.from(el.querySelectorAll('[class*="content"], [class*="text"], [class*="message"], [class*="comment"]'));
+                for (const nameNode of namedNodes) {
+                    const username = cleanUsername(nameNode.innerText || nameNode.textContent || "");
+                    if (!username) continue;
+                    for (const contentNode of contentNodes) {
+                        if (contentNode === nameNode || nameNode.contains(contentNode)) continue;
+                        const content = normalizeText(contentNode.innerText || contentNode.textContent || "");
+                        if (content && content !== username && content.length <= 200) {
+                            return { username, content };
+                        }
+                    }
+                }
+
+                const spans = Array.from(el.querySelectorAll("span"))
+                    .map(span => normalizeText(span.innerText || span.textContent || ""))
+                    .filter(Boolean);
+                if (spans.length >= 2) {
+                    const username = cleanUsername(spans[0]);
+                    const content = normalizeText(spans.slice(1).join(" "));
+                    if (username && content && content !== username && content.length <= 200) {
+                        return { username, content };
+                    }
+                }
+
+                return null;
+            }
+
+            function candidateElements(root) {
+                if (!root || root.nodeType !== Node.ELEMENT_NODE) return [];
+                const items = [];
+                if (isVisible(root)) items.push(root);
+                if (typeof root.querySelectorAll === "function") {
+                    const nested = root.querySelectorAll(scanSelectors.join(","));
+                    for (const el of nested) {
+                        if (isVisible(el)) items.push(el);
+                    }
+                }
+                return items;
+            }
+
+            function processElement(el) {
+                if (!el || processedNodes.has(el) || !isVisible(el)) return;
+                if (el.children && el.children.length > 12) return;
+                const text = normalizeText(el.innerText || el.textContent || "");
+                if (!text || text.length > maxNodeTextLength) return;
+
+                const gift = parseGift(text);
+                if (gift) {
+                    processedNodes.add(el);
+                    emitOnce("gift", gift.username, gift.content, gift.metadata);
+                    return;
+                }
+
+                const comment = parseComment(text, el);
+                if (comment) {
+                    processedNodes.add(el);
+                    emitOnce("chat", comment.username, comment.content);
+                }
+            }
+
+            function scan(root = document.body) {
+                try {
+                    for (const el of candidateElements(root)) {
+                        processElement(el);
+                    }
+                } catch (err) {
+                    console.log("[Bot] Monitor scan error: " + (err && err.message ? err.message : err));
+                    if (window.onMonitorError) window.onMonitorError(String(err && err.message ? err.message : err));
+                }
+            }
+
+            const observer = new MutationObserver((mutations) => {
+                for (const mutation of mutations) {
+                    for (const node of mutation.addedNodes) {
+                        scan(node);
+                    }
+                    if (mutation.type === "characterData" && mutation.target && mutation.target.parentElement) {
+                        scan(mutation.target.parentElement);
+                    }
+                }
+            });
+
+            observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+            const interval = window.setInterval(() => scan(document.body), 2500);
+
+            window.__douyinLiveAssistantMonitor = {
+                stop() {
+                    observer.disconnect();
+                    window.clearInterval(interval);
+                }
+            };
+
+            scan(document.body);
+            console.log("[Bot] Douyin Live Monitor v2 ready.");
+        })();
+        """
         await self.page.evaluate(monitor_js)
         self.log_callback("INFO", "已成功注入弹幕监听脚本")
 
-    def _on_new_message_js(self, username: str, content: str):
+    def _on_new_message_js(self, username: str, content: str, event_type: str = "chat", metadata: Optional[dict] = None):
         # Update last interaction time
         self.last_message_time = time.time()
         # Dispatch to callback
-        self.chat_callback(username, content)
+        self.chat_callback(username, content, event_type, metadata or {})
 
     def _on_monitor_error_js(self, reason: str):
         self.log_callback("WARNING", f"网页监听脚本报告异常: {reason}，系统将自动捕获直播间网页快照进行分析。")
