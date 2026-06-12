@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>抖音直播 AI 自动回复助手 - 控制面板</title>
+    <meta name="description" content="基于 Playwright 和 大语言模型 的抖音直播间自动弹幕监控、智能回复和定时互动工具。">
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;600;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="glass-bg-blobs">
+        <div class="blob blob-purple"></div>
+        <div class="blob blob-blue"></div>
+    </div>
+    
+    <div class="app-container">
+        <!-- HEADER -->
+        <header class="app-header">
+            <div class="header-logo">
+                <span class="logo-icon">🤖</span>
+                <div>
+                    <h1 id="main-title">宇哥传奇抖音直播智能助手</h1>
+                    <p class="subtitle">Douyin Live AI Assistant Dashboard</p>
+                </div>
+            </div>
+            <div class="status-badge-container">
+                <span class="status-dot" id="status-dot"></span>
+                <span id="status-text" class="status-text">未启动</span>
+            </div>
+        </header>
+
+        <!-- MAIN LAYOUT -->
+        <main class="dashboard-grid">
+            
+            <!-- LEFT PANEL: CONTROLS & LOGS -->
+            <section class="left-panel">
+                <!-- Control Card -->
+                <div class="card glass-card control-card">
+                    <h2 class="section-title"><span class="title-decor"></span>控制台</h2>
+                    <div class="form-group">
+                        <label for="live-url-input">直播间地址</label>
+                        <div class="input-action-group">
+                            <input type="text" id="live-url-input" placeholder="输入抖音直播间 URL，如 https://live.douyin.com/1234567..." />
+                            <button id="btn-start" class="btn btn-primary">启动助手</button>
+                            <button id="btn-stop" class="btn btn-danger btn-disabled" disabled>停止</button>
+                        </div>
+                    </div>
+                    
+                    <div class="toggles-grid">
+                        <div class="toggle-item">
+                            <div class="toggle-info">
+                                <span class="toggle-title">AI 自动回复</span>
+                                <span class="toggle-desc">无匹配规则时，调用大模型智能解答</span>
+                            </div>
+                            <label class="switch">
+                                <input type="checkbox" id="ai-reply-toggle" checked>
+                                <span class="slider round"></span>
+                            </label>
+                        </div>
+                        <div class="toggle-item">
+                            <div class="toggle-info">
+                                <span class="toggle-title">智能场景互动</span>
+                                <span class="toggle-desc">点赞达标或冷场时，自动发弹幕带节奏</span>
+                            </div>
+                            <label class="switch">
+                                <input type="checkbox" id="smart-triggers-toggle" checked>
+                                <span class="slider round"></span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Real-time Logs Card -->
+                <div class="card glass-card log-card">
+                    <div class="log-card-header">
+                        <h2 class="section-title"><span class="title-decor"></span>实时监控日志</h2>
+                        <button id="btn-clear-logs" class="btn btn-secondary btn-xs">清除日志</button>
+                    </div>
+                    <div class="log-terminal" id="log-terminal">
+                        <div class="log-line system-line">[00:00:00] [SYSTEM] 控制面板连接成功，等待启动。</div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- RIGHT PANEL: CONFIGURATION -->
+            <section class="right-panel">
+                <!-- Tabs Navigation -->
+                <div class="tabs-nav">
+                    <button class="tab-btn active" data-tab="tab-rules">关键词规则</button>
+                    <button class="tab-btn" data-tab="tab-timers">定时发言</button>
+                    <button class="tab-btn" data-tab="tab-smart">智能场景配置</button>
+                    <button class="tab-btn" data-tab="tab-llm">AI 模型设置</button>
+                </div>
+
+                <!-- TAB CONTENT: RULES -->
+                <div class="card glass-card tab-content active" id="tab-rules">
+                    <h3 class="card-inner-title">关键词回复规则</h3>
+                    <p class="section-hint">当观众发言包含关键词时，优先执行对应规则回复（规则优先原则）。</p>
+                    
+                    <div class="add-rule-form">
+                        <input type="text" id="rule-keyword-input" placeholder="关键词，如：多少钱" />
+                        <input type="text" id="rule-reply-input" placeholder="回复内容，如：99元包邮哦" />
+                        <button id="btn-add-rule" class="btn btn-accent">添加规则</button>
+                    </div>
+
+                    <div class="table-container">
+                        <table id="rules-table">
+                            <thead>
+                                <tr>
+                                    <th>触发关键词</th>
+                                    <th>自动回复内容</th>
+                                    <th style="width: 80px; text-align: center;">操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="rules-list-body">
+                                <!-- Dynamic items here -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- TAB CONTENT: TIMERS -->
+                <div class="card glass-card tab-content" id="tab-timers">
+                    <h3 class="card-inner-title">定时播报发言</h3>
+                    <p class="section-hint">设定固定时间间隔自动发送欢迎语或带货文案，系统会自动在设定值上下浮动随机数，避免机械化发言。</p>
+                    
+                    <div class="add-rule-form">
+                        <input type="number" id="timer-seconds-input" placeholder="时间间隔 (秒，如300)" min="10" style="max-width: 150px;" />
+                        <input type="text" id="timer-content-input" placeholder="公告内容，如：欢迎关注主播～" />
+                        <button id="btn-add-timer" class="btn btn-accent">添加计划</button>
+                    </div>
+
+                    <div class="table-container">
+                        <table id="timers-table">
+                            <thead>
+                                <tr>
+                                    <th style="width: 120px;">时间间隔</th>
+                                    <th>定时播报内容</th>
+                                    <th style="width: 100px; text-align: center;">状态</th>
+                                    <th style="width: 80px; text-align: center;">操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="timers-list-body">
+                                <!-- Dynamic items here -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- TAB CONTENT: SMART TRIGGERS -->
+                <div class="card glass-card tab-content" id="tab-smart">
+                    <h3 class="card-inner-title">冷场与里程碑互动</h3>
+                    <p class="section-hint">智能识别直播间的活跃度，在缺乏互动或粉丝贡献点赞时自动活跃气氛。</p>
+                    
+                    <div class="settings-form">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="smart-silence-5m">5分钟冷场回复</label>
+                                <textarea id="smart-silence-5m" rows="2" placeholder="公屏上5分钟没人说话时的互动词"></textarea>
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="smart-silence-10m">10分钟冷场回复</label>
+                                <textarea id="smart-silence-10m" rows="2" placeholder="公屏上10分钟没人说话时的互动词"></textarea>
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="smart-like-100">点赞增长每满 100 次感谢语</label>
+                                <textarea id="smart-like-100" rows="2" placeholder="感谢点赞词，系统会自动将文本中的 '100' 替换为真实数字"></textarea>
+                            </div>
+                        </div>
+                        <button id="btn-save-smart" class="btn btn-accent btn-full">保存互动设置</button>
+                    </div>
+                </div>
+
+                <!-- TAB CONTENT: LLM SETTINGS -->
+                <div class="card glass-card tab-content" id="tab-llm">
+                    <h3 class="card-inner-title">AI 大模型服务配置</h3>
+                    <p class="section-hint">配置用于智能答疑的大语言模型接口。支持标准的 OpenAI API 格式（如 DeepSeek 等第三方渠道）或 Google Gemini API。</p>
+                    
+                    <div class="settings-form">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="llm-provider">接口模型提供商</label>
+                                <select id="llm-provider">
+                                    <option value="openai">OpenAI 兼容接口 (DeepSeek / 百度 / 阿里云 / 本地等)</option>
+                                    <option value="gemini">Google Gemini API</option>
+                                </select>
+                            </div>
+                        </div>
+                        
+                        <!-- OpenAI Sub-fields -->
+                        <div class="llm-conditional-fields" id="provider-openai-fields">
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="openai-api-base">API 接口地址 (Base URL)</label>
+                                    <input type="text" id="openai-api-base" placeholder="https://api.openai.com/v1" />
+                                </div>
+                                <div class="form-group">
+                                    <label for="openai-model">模型名称 (Model)</label>
+                                    <input type="text" id="openai-model" placeholder="gpt-3.5-turbo" />
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="openai-api-key">API 密钥 (API Key)</label>
+                                    <input type="password" id="openai-api-key" placeholder="sk-........................" />
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Gemini Sub-fields -->
+                        <div class="llm-conditional-fields" id="provider-gemini-fields" style="display: none;">
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="gemini-model">Gemini 模型名称</label>
+                                    <input type="text" id="gemini-model" placeholder="gemini-1.5-flash" />
+                                </div>
+                                <div class="form-group">
+                                    <label for="gemini-api-key">Gemini API Key</label>
+                                    <input type="password" id="gemini-api-key" placeholder="AIzaSy........................" />
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="system-prompt">系统设定 (System Prompt)</label>
+                                <textarea id="system-prompt" rows="4" placeholder="规定 AI 的人设、语气、知识点与回答规范..."></textarea>
+                                <span class="input-info">提示：系统在生成回复时，会自动附加【回复控制在20字以内】等严格判定逻辑。</span>
+                            </div>
+                        </div>
+                        
+                        <button id="btn-save-llm" class="btn btn-accent btn-full">保存 AI 配置</button>
+                    </div>
+                </div>
+            </section>
+        </main>
+        
+        <footer class="app-footer">
+            <p>© 2026 抖音直播智能辅助系统. All rights reserved. Designed for professional streamers.</p>
+        </footer>
+    </div>
+    
+    <script src="/static/js/app.js"></script>
+</body>
+</html>
