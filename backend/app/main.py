@@ -1,12 +1,17 @@
 import asyncio
 import datetime
 import os
+import sys
 from typing import List
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+
+# Keep reference to raw output streams to print logs and prevent infinite recursion during stdout capture
+_original_stdout = sys.stdout
+_original_stderr = sys.stderr
 
 from .asyncio_compat import configure_windows_event_loop_policy
 from .config import settings
@@ -51,11 +56,46 @@ async def broadcast(message: dict):
         if ws in active_sockets:
             active_sockets.remove(ws)
 
+def safe_create_task(coro):
+    """Safely creates an asyncio task if there is a running event loop in the current thread, otherwise ignores it."""
+    try:
+        loop = asyncio.get_running_loop()
+        if loop.is_running():
+            loop.create_task(coro)
+    except RuntimeError:
+        pass
+
+class StreamToLogger:
+    def __init__(self, level="INFO"):
+        self.level = level
+        self.linebuf = ""
+
+    def write(self, buf):
+        for line in buf.splitlines(keepends=True):
+            if line.endswith("\n") or line.endswith("\r"):
+                self.linebuf += line
+                stripped = self.linebuf.strip()
+                if stripped:
+                    log_callback(self.level, stripped)
+                self.linebuf = ""
+            else:
+                self.linebuf += line
+
+    def flush(self):
+        if self.linebuf.strip():
+            log_callback(self.level, self.linebuf.strip())
+            self.linebuf = ""
+
 # Callbacks for automation bot
 def log_callback(level: str, text: str):
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     log_line = f"[{timestamp}] [{level}] {text}\n"
-    print(log_line, end="")
+    
+    try:
+        _original_stdout.write(log_line)
+        _original_stdout.flush()
+    except Exception:
+        pass
     
     try:
         log_file = settings.DATA_DIR / "backend.log"
@@ -64,16 +104,14 @@ def log_callback(level: str, text: str):
     except Exception:
         pass
     
-    # Broadcast to UI
+    # Broadcast to UI safely
     log_entry = {
         "timestamp": datetime.datetime.now().strftime("%H:%M:%S"),
         "type": "system",
         "level": level,
         "text": text
     }
-    loop = asyncio.get_event_loop()
-    if loop.is_running():
-        loop.create_task(broadcast(log_entry))
+    safe_create_task(broadcast(log_entry))
 
 def chat_callback(username: str, content: str, event_type: str = "chat", metadata: dict = None):
     metadata = metadata or {}
@@ -86,14 +124,17 @@ def chat_callback(username: str, content: str, event_type: str = "chat", metadat
         "metadata": metadata
     }
     label = "GIFT" if event_type == "gift" else "CHAT"
-    print(f"[{timestamp}] [{label}] {username}: {content}")
     
-    # Broadcast to UI
-    loop = asyncio.get_event_loop()
-    if loop.is_running():
-        loop.create_task(broadcast(chat_entry))
-        if event_type == "chat":
-            loop.create_task(process_chat_reply(username, content))
+    try:
+        _original_stdout.write(f"[{timestamp}] [{label}] {username}: {content}\n")
+        _original_stdout.flush()
+    except Exception:
+        pass
+    
+    # Broadcast to UI safely
+    safe_create_task(broadcast(chat_entry))
+    if event_type == "chat":
+        safe_create_task(process_chat_reply(username, content))
 
 async def process_chat_reply(username: str, content: str):
     global bot
@@ -130,15 +171,18 @@ def status_callback(status: str):
         "status": status,
         "like_count": bot.like_count if bot else 0
     }
-    loop = asyncio.get_event_loop()
-    if loop.is_running():
-        loop.create_task(broadcast(status_entry))
+    safe_create_task(broadcast(status_entry))
 
 # Initialize bot and scheduler
 @app.on_event("startup")
 async def startup_event():
     global bot, scheduler, login_manager
     log_callback("INFO", f"Asyncio event loop: {asyncio.get_running_loop().__class__.__name__}")
+    
+    # Redirect standard streams to backend UI logs (captures uvicorn and other library outputs)
+    sys.stdout = StreamToLogger("INFO")
+    sys.stderr = StreamToLogger("ERROR")
+    
     login_manager = DouyinLoginManager()
     bot = DouyinBot(
         log_callback=log_callback,
@@ -150,6 +194,11 @@ async def startup_event():
 @app.on_event("shutdown")
 async def shutdown_event():
     global bot, scheduler, login_manager
+    
+    # Restore stdout/stderr
+    sys.stdout = _original_stdout
+    sys.stderr = _original_stderr
+    
     if scheduler:
         await scheduler.stop()
     if bot:

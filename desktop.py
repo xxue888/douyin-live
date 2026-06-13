@@ -1,6 +1,18 @@
+import sys
+
+class DummyStream:
+    def write(self, data):
+        pass
+    def flush(self):
+        pass
+
+if sys.stdout is None:
+    sys.stdout = DummyStream()
+if sys.stderr is None:
+    sys.stderr = DummyStream()
+
 import os
 import socket
-import sys
 import threading
 import time
 import webbrowser
