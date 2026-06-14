@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import random
 import time
 import traceback
 from typing import Callable, Optional
@@ -29,6 +30,11 @@ class DouyinBot:
         self.like_count = 0
         self.last_message_time = time.time()
         self._loop_interval = 0.5
+        
+        # Concurrency control & anti-ban cooldown for sending messages
+        self._send_lock = asyncio.Lock()
+        self._last_send_time = 0.0
+        self._min_send_interval = 5.0
         
     def set_status(self, new_status: str):
         self.status = new_status
@@ -89,8 +95,16 @@ class DouyinBot:
                 headless=False,
                 user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                 viewport={"width": 1280, "height": 800},
-                args=["--no-sandbox", "--disable-setuid-sandbox"]
+                ignore_default_args=["--enable-automation"],
+                args=[
+                    "--no-sandbox",
+                    "--disable-setuid-sandbox",
+                    "--disable-blink-features=AutomationControlled"
+                ]
             )
+            
+            # Hide automation features (anti-anti-crawling)
+            await self.context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
             
             # Persistent context opens at least one page automatically
             self.page = self.context.pages[0] if self.context.pages else await self.context.new_page()
@@ -724,87 +738,98 @@ class DouyinBot:
             self.log_callback("WARNING", "发送失败：机器人未处于运行状态")
             return False
             
-        try:
-            # Locate visible chat input box
-            textarea = None
-            input_selectors = [
-                '#chatInput div[contenteditable="true"]',
-                '#chatInput textarea',
-                '#chatInput input',
-                'div[class*="input-container"] div[contenteditable="true"]',
-                'div[class*="chatroom___input"] div[contenteditable="true"]',
-                'textarea[placeholder*="说点什么"]:visible',
-                'textarea[placeholder*="发言"]:visible',
-                'div[contenteditable="true"]:visible',
-                'input[placeholder*="说点什么"]:visible',
-                '[class*="chatroom___input"]:visible',
-                '[class*="chat-input"]:visible'
-            ]
-            for selector in input_selectors:
-                el = await self.page.query_selector(selector)
-                if el and await el.is_visible():
-                    textarea = el
-                    break
-            
-            if not textarea:
-                self.log_callback("ERROR", "未找到聊天输入框，无法发送消息")
-                await self.save_snapshot()
-                # Run diagnostic to find what elements are visible on page
-                inputs_info = await self.page.evaluate("""() => {
-                    let inputs = Array.from(document.querySelectorAll('input, textarea, [contenteditable="true"], div'));
-                    let matches = inputs.filter(el => {
-                        let text = (el.placeholder || el.className || el.innerText || "").toLowerCase();
-                        return text.includes("input") || text.includes("textarea") || text.includes("说点") || text.includes("发言") || text.includes("chat");
-                    });
-                    return matches.slice(0, 5).map(el => `${el.tagName} (class="${el.className}", placeholder="${el.placeholder || ''}", visible=${el.offsetWidth > 0})`).join(' | ');
-                }""")
-                self.log_callback("DEBUG", f"诊断结果 - 类似输入框的元素: {inputs_info}")
+        async with self._send_lock:
+            # Enforce random cooldown interval to bypass wind-control
+            now = time.time()
+            elapsed = now - self._last_send_time
+            target_interval = self._min_send_interval + random.uniform(0.0, 3.0)
+            if elapsed < target_interval:
+                wait_time = target_interval - elapsed
+                self.log_callback("DEBUG", f"[Bot] 发送过于频繁，等待随机冷却时间: {wait_time:.2f}秒...")
+                await asyncio.sleep(wait_time)
+                
+            try:
+                # Locate visible chat input box
+                textarea = None
+                input_selectors = [
+                    '#chatInput div[contenteditable="true"]',
+                    '#chatInput textarea',
+                    '#chatInput input',
+                    'div[class*="input-container"] div[contenteditable="true"]',
+                    'div[class*="chatroom___input"] div[contenteditable="true"]',
+                    'textarea[placeholder*="说点什么"]:visible',
+                    'textarea[placeholder*="发言"]:visible',
+                    'div[contenteditable="true"]:visible',
+                    'input[placeholder*="说点什么"]:visible',
+                    '[class*="chatroom___input"]:visible',
+                    '[class*="chat-input"]:visible'
+                ]
+                for selector in input_selectors:
+                    el = await self.page.query_selector(selector)
+                    if el and await el.is_visible():
+                        textarea = el
+                        break
+                
+                if not textarea:
+                    self.log_callback("ERROR", "未找到聊天输入框，无法发送消息")
+                    await self.save_snapshot()
+                    # Run diagnostic to find what elements are visible on page
+                    inputs_info = await self.page.evaluate("""() => {
+                        let inputs = Array.from(document.querySelectorAll('input, textarea, [contenteditable="true"], div'));
+                        let matches = inputs.filter(el => {
+                            let text = (el.placeholder || el.className || el.innerText || "").toLowerCase();
+                            return text.includes("input") || text.includes("textarea") || text.includes("说点") || text.includes("发言") || text.includes("chat");
+                        });
+                        return matches.slice(0, 5).map(el => `${el.tagName} (class="${el.className}", placeholder="${el.placeholder || ''}", visible=${el.offsetWidth > 0})`).join(' | ');
+                    }""")
+                    self.log_callback("DEBUG", f"诊断结果 - 类似输入框的元素: {inputs_info}")
+                    return False
+                    
+                self.log_callback("DEBUG", f"[Bot] 选中聊天输入框. 正在清空并模拟键盘键入: '{content}'")
+                await textarea.click()
+                
+                # React clears standard value
+                await textarea.fill("") 
+                
+                # Simulate real typing sequentially to trigger page React/Vue state changes
+                if hasattr(textarea, "press_sequentially"):
+                    await textarea.press_sequentially(content, delay=40)
+                else:
+                    await textarea.type(content, delay=40)
+                    
+                # Verify value actually typed
+                typed_val = await textarea.evaluate("el => el.value || el.innerText")
+                if not typed_val:
+                    # Force fill if sequential typing was bypassed
+                    await textarea.fill(content)
+                    
+                # Locate visible send button
+                send_btn = None
+                btn_selectors = [
+                    '#chatInput [class*="send-btn"]',
+                    '#chatInput svg[type="button"]',
+                    '#chatInput button',
+                    'button:has-text("发送"):visible',
+                    'div[class*="send-btn"]:visible',
+                    '[class*="send-btn"]:visible',
+                    'span:has-text("发送"):visible'
+                ]
+                for selector in btn_selectors:
+                    el = await self.page.query_selector(selector)
+                    if el and await el.is_visible():
+                        send_btn = el
+                        break
+                
+                if send_btn:
+                    self.log_callback("DEBUG", "[Bot] 找到【发送】按钮，正在执行点击操作...")
+                    await send_btn.click()
+                else:
+                    self.log_callback("DEBUG", "[Bot] 未找到【发送】按钮，正在回车发送...")
+                    await textarea.press("Enter")
+                    
+                self.log_callback("INFO", f"已成功向公屏发送消息: {content}")
+                self._last_send_time = time.time()
+                return True
+            except Exception as e:
+                self.log_callback("ERROR", f"向公屏发送消息失败: {str(e)}")
                 return False
-                
-            self.log_callback("DEBUG", f"[Bot] 选中聊天输入框. 正在清空并模拟键盘键入: '{content}'")
-            await textarea.click()
-            
-            # React clears standard value
-            await textarea.fill("") 
-            
-            # Simulate real typing sequentially to trigger page React/Vue state changes
-            if hasattr(textarea, "press_sequentially"):
-                await textarea.press_sequentially(content, delay=40)
-            else:
-                await textarea.type(content, delay=40)
-                
-            # Verify value actually typed
-            typed_val = await textarea.evaluate("el => el.value || el.innerText")
-            if not typed_val:
-                # Force fill if sequential typing was bypassed
-                await textarea.fill(content)
-                
-            # Locate visible send button
-            send_btn = None
-            btn_selectors = [
-                '#chatInput [class*="send-btn"]',
-                '#chatInput svg[type="button"]',
-                '#chatInput button',
-                'button:has-text("发送"):visible',
-                'div[class*="send-btn"]:visible',
-                '[class*="send-btn"]:visible',
-                'span:has-text("发送"):visible'
-            ]
-            for selector in btn_selectors:
-                el = await self.page.query_selector(selector)
-                if el and await el.is_visible():
-                    send_btn = el
-                    break
-            
-            if send_btn:
-                self.log_callback("DEBUG", "[Bot] 找到【发送】按钮，正在执行点击操作...")
-                await send_btn.click()
-            else:
-                self.log_callback("DEBUG", "[Bot] 未找到【发送】按钮，正在回车发送...")
-                await textarea.press("Enter")
-                
-            self.log_callback("INFO", f"已成功向公屏发送消息: {content}")
-            return True
-        except Exception as e:
-            self.log_callback("ERROR", f"向公屏发送消息失败: {str(e)}")
-            return False

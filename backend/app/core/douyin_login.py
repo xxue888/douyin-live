@@ -44,8 +44,15 @@ class DouyinLoginManager:
                 "Chrome/120.0.0.0 Safari/537.36"
             ),
             viewport={"width": 1280, "height": 900},
-            args=["--no-sandbox", "--disable-setuid-sandbox"],
+            ignore_default_args=["--enable-automation"],
+            args=[
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--disable-blink-features=AutomationControlled"
+            ],
         )
+        # Hide automation features (anti-anti-crawling)
+        await self.context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
         self.page = self.context.pages[0] if self.context.pages else await self.context.new_page()
         await self.page.goto(self.login_url, wait_until="domcontentloaded", timeout=60000)
         await self._open_login_panel_if_needed()
